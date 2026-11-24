@@ -41,7 +41,7 @@ var __async = (__this, __arguments, generator) => {
 // src/moviesdrive/index.js
 var cheerio = require("cheerio-without-node-native");
 var PROVIDER = "MoviesDrive";
-var MAIN_URL = "https://new2.moviesdrives.my";
+var MAIN_URL = "https://new4.moviesdrive.cyou";
 var TMDB_KEY = "439c478a771f35c05022f9feabcca01c";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 var BASE_HEADERS = {
@@ -396,24 +396,42 @@ function parseArchive(url, episode) {
     var hosts = [];
     var isEp = episode != null;
     var totalLinks = 0;
-    $("a").each(function(i, el) {
-      totalLinks++;
-      var h = $(el).attr("href");
-      if (!h) return;
-      if (isEp) {
-        var blockText = $(el).parent().parent().text() || "";
-        if (!blockText) blockText = $(el).parent().text() || "";
-        var epMatch = blockText.match(/(?:EP|Episode|E)[^a-zA-Z0-9]*0*(\d+)/i);
-        if (epMatch) {
-          var epNum = parseInt(epMatch[1]);
-          if (epNum !== episode) {
-            log("Skipping wrong episode link: " + epNum + " (wanted " + episode + ")");
-            return;
+    // episode pages are h5 pairs: <h5>Ep01– 480p [210MB]</h5><h5><a href="hubcloud...">HubCloud</a></h5>
+    if (isEp) {
+      var h5s = $("h5").toArray();
+      for (var hi2 = 0; hi2 < h5s.length; hi2++) {
+        var h5txt = $(h5s[hi2]).text();
+        var epm = h5txt.match(/(?:EP|Episode|E)\s*0*(\d+)/i);
+        if (!epm || parseInt(epm[1]) !== episode) continue;
+        // collect hubcloud/gdflix links from this h5 and the next few siblings
+        var scope = $(h5s[hi2]).nextUntil("hr").add($(h5s[hi2]));
+        scope.find("a").each(function(i, el) {
+          totalLinks++;
+          var h = $(el).attr("href");
+          if (h && isHostLink(h)) extractHostLink(h, hosts);
+        });
+      }
+    }
+    if (!isEp || hosts.length === 0) {
+      $("a").each(function(i, el) {
+        totalLinks++;
+        var h = $(el).attr("href");
+        if (!h) return;
+        if (isEp) {
+          var blockText = $(el).parent().parent().text() || "";
+          if (!blockText) blockText = $(el).parent().text() || "";
+          var epMatch = blockText.match(/(?:EP|Episode|E)[^a-zA-Z0-9]*0*(\d+)/i);
+          if (epMatch) {
+            var epNum = parseInt(epMatch[1]);
+            if (epNum !== episode) {
+              log("Skipping wrong episode link: " + epNum + " (wanted " + episode + ")");
+              return;
+            }
           }
         }
-      }
-      if (isHostLink(h)) extractHostLink(h, hosts);
-    });
+        if (isHostLink(h)) extractHostLink(h, hosts);
+      });
+    }
     log("archive: scanned " + totalLinks + " <a> tags, found " + hosts.length + " hoster links");
     if (hosts.length === 0 && htmlLen > 200) {
       log("archive: scanning raw HTML for hubcloud/gdflix patterns");
@@ -523,9 +541,46 @@ function resolveHubcloud(url, label) {
         }
       }
       if (!fslUrl) {
-        var r2m = bridgeHtml.match(/https?:\/\/pub-[a-zA-Z0-9\-]+\.r2\.dev[^\s"'<>]*/);
+        var r2m = bridgeHtml.match(/https?:\/\/[a-z0-9-]+\.r2\.cloudflarestorage\.com[^"'<>\s]*/i);
         if (r2m) {
           fslUrl = r2m[0].replace(/["'].*$/, "").replace(/[<>].*$/, "");
+        }
+      }
+      if (!fslUrl) {
+        // hubcloud.php bridges sometimes return a direct workers.dev file link instead of r2/fsl
+        var wm = bridgeHtml.match(/https?:\/\/[a-z0-9.\-]+\.workers\.dev\/[^"'<>\s]+/i);
+        if (wm) {
+          fslUrl = wm[0].replace(/["'].*$/, "").replace(/[<>].*$/, "");
+        }
+      }
+      if (!fslUrl) {
+        var r2dev = bridgeHtml.match(/https?:\/\/pub-[a-zA-Z0-9\-]+\.r2\.dev[^\s"'<>]*/);
+        if (r2dev) {
+          fslUrl = r2dev[0].replace(/["'].*$/, "").replace(/[<>].*$/, "");
+        }
+      }
+      // new bridge format: pixel generator link -> redirect exposes signed file URL in dl.php?link=...
+      if (!fslUrl) {
+        var pm = bridgeHtml.match(/https?:\/\/pixel\.hubcloud\.mov\/\?id=[\w:+\-]+/i);
+        if (pm) {
+          var genUrl = pm[0];
+          log("hubcloud: pixel generator " + genUrl.substring(0, 60));
+          var genResp = yield get(genUrl, { headers: { "Referer": bridgeUrl, "User-Agent": UA }, redirect: "follow" }, 2e4);
+          if (genResp && genResp.url) {
+            var lm = genResp.url.match(/[?&]link=(https?[^&]+)/);
+            if (lm) {
+              fslUrl = decodeURIComponent(lm[1]);
+              log("hubcloud: extracted signed url from final redirect");
+            }
+          }
+        }
+      }
+      // pixeldrain fallback: bridge links use dead pixeldrain.dev, live host is .com with API
+      if (!fslUrl) {
+        var pdm = bridgeHtml.match(/https?:\/\/pixeldrain\.(?:dev|com)\/u\/([a-zA-Z0-9]+)/i);
+        if (pdm) {
+          fslUrl = "https://pixeldrain.com/api/file/" + pdm[1];
+          log("hubcloud: pixeldrain id " + pdm[1]);
         }
       }
       var streams = [];
@@ -569,10 +624,18 @@ function getStreams(tmdbId, mediaType, season, episode) {
       if (info.imdb) {
         log("searching by imdb id: " + info.imdb);
         var results = yield searchSite(info.imdb);
-        if (results.length > 0) {
-          best = results[0];
-          log("imdb exact match: " + best.title + " (id=" + info.imdb + ")");
+        // search.php fuzzy-matches imdb ids (tt0903747 -> "Prince of Darkness");
+        // only trust the hit if its title actually resembles the resolved title
+        var lt = (info.title || "").toLowerCase();
+        for (var ri = 0; ri < results.length; ri++) {
+          var rt = (results[ri].title || "").toLowerCase();
+          if (rt.indexOf(lt) >= 0 || lt.indexOf(rt.replace(/\(\d{4}[^)]*\)/, "").trim()) >= 0) {
+            best = results[ri];
+            log("imdb match validated by title: " + best.title);
+            break;
+          }
         }
+        if (!best) log("imdb result rejected (title mismatch), falling back to title search");
       }
       if (!best) {
         log("searching by title: " + info.title);
