@@ -1,6 +1,54 @@
 {
+  "manifestVersion": 1,
   "name": "Hindi-Nuvio",
   "version": "1.0.0",
+  "description": "Hindi movies and TV providers for Nuvio",
+  "providers": [
+    {
+      "id": "moviesdrive",
+      "name": "MoviesDrive",
+      "description": "MoviesDrive - Movies and TV shows with multiple streaming servers",
+      "version": "2.0.0",
+      "author": "JK",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/moviesdrive.js",
+      "enabled": true,
+      "formats": [
+        "mp4",
+        "mkv",
+        "m3u8"
+      ],
+      "logo": "https://i.postimg.cc/bwDbhq9q/moviesdrive.png",
+      "contentLanguage": [
+        "en",
+        "hi"
+      ]
+    },
+    {
+      "id": "prmovies",
+      "name": "PRMovies",
+      "description": "Multi-quality HLS streams via vidsrc (movies, series, Hindi dubbed)",
+      "version": "1.0.0",
+      "author": "Nuvio Team",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/prmovies.js",
+      "enabled": true,
+      "formats": [
+        "m3u8"
+      ],
+      "logo": "https://i.postimg.cc/sXFMmJyg/netmirror.png",
+      "contentLanguage": [
+        "en",
+        "hi"
+      ]
+    }
+  ],
   "scrapers": [
     {
       "id": "moviesdrive",
